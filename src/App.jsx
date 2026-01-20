@@ -16,7 +16,7 @@ import Checkout from './pages/Checkout';
 import AdminDashboard from './pages/AdminDashboard';
 
 function AppContent() {
-  const { products, loading, getCategories } = useProducts();
+  const { products, loading, getCategories, getLiquidationProducts } = useProducts();
 
   const [cart, setCart] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -93,6 +93,7 @@ function AppContent() {
           <Home
             products={filteredProducts}
             allProducts={products}
+            liquidationProducts={getLiquidationProducts()}
             loading={loading}
             addToCart={addToCart}
             selectedCategory={selectedCategory}

@@ -2,313 +2,390 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
 
 export default function InventoryPanel() {
-    const [products, setProducts] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [showModal, setShowModal] = useState(false);
-    const [editingProduct, setEditingProduct] = useState(null);
-    const [formData, setFormData] = useState({
-        name: '',
-        category: '',
-        price: '',
-        description: '',
-        image: '',
-        discount_percent: 0,
-        is_daily_deal: false
+  const [products, setProducts] = useState([]);
+  const [discountRules, setDiscountRules] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    category: '',
+    price: '',
+    description: '',
+    image: '',
+    discount_percent: 0,
+    is_daily_deal: false,
+    expiration_date: '',
+    is_liquidation: false
+  });
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState({ type: '', text: '' });
+
+  const categories = [
+    'Medicamentos',
+    'Suplementos',
+    'Equipo Médico',
+    'Primeros Auxilios',
+    'Cuidado Personal',
+    'Bebés'
+  ];
+
+  useEffect(() => {
+    fetchProducts();
+    fetchDiscountRules();
+  }, []);
+
+  const fetchDiscountRules = async () => {
+    const { data } = await supabase
+      .from('discount_rules')
+      .select('*')
+      .eq('is_active', true);
+    setDiscountRules(data || []);
+  };
+
+  // Get active discount for a product based on today's rules
+  const getActiveDiscount = (product) => {
+    const today = new Date().getDay();
+    const matchingRule = discountRules.find(
+      rule => rule.category === product.category && rule.days_of_week?.includes(today)
+    );
+    return matchingRule ? { percent: matchingRule.discount_percent, name: matchingRule.name } : null;
+  };
+
+  const fetchProducts = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .order('id', { ascending: false });
+
+    if (error) {
+      console.error('Error:', error);
+    } else {
+      setProducts(data || []);
+    }
+    setLoading(false);
+  };
+
+  const openAddModal = () => {
+    setEditingProduct(null);
+    setFormData({
+      name: '',
+      category: categories[0],
+      price: '',
+      description: '',
+      image: '',
+      discount_percent: 0,
+      is_daily_deal: false,
+      expiration_date: '',
+      is_liquidation: false
     });
-    const [saving, setSaving] = useState(false);
-    const [message, setMessage] = useState({ type: '', text: '' });
+    setShowModal(true);
+  };
 
-    const categories = [
-        'Medicamentos',
-        'Suplementos',
-        'Equipo Médico',
-        'Primeros Auxilios',
-        'Cuidado Personal',
-        'Bebés'
-    ];
+  const openEditModal = (product) => {
+    setEditingProduct(product);
+    setFormData({
+      name: product.name,
+      category: product.category,
+      price: product.price,
+      description: product.description || '',
+      image: product.image || '',
+      discount_percent: product.discount_percent || 0,
+      is_daily_deal: product.is_daily_deal || false,
+      expiration_date: product.expiration_date || '',
+      is_liquidation: product.is_liquidation || false
+    });
+    setShowModal(true);
+  };
 
-    useEffect(() => {
-        fetchProducts();
-    }, []);
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setMessage({ type: '', text: '' });
 
-    const fetchProducts = async () => {
-        setLoading(true);
-        const { data, error } = await supabase
-            .from('products')
-            .select('*')
-            .order('id', { ascending: false });
-
-        if (error) {
-            console.error('Error:', error);
-        } else {
-            setProducts(data || []);
-        }
-        setLoading(false);
+    const productData = {
+      name: formData.name,
+      category: formData.category,
+      price: parseFloat(formData.price),
+      description: formData.description,
+      image: formData.image,
+      discount_percent: parseInt(formData.discount_percent) || 0,
+      is_daily_deal: formData.is_daily_deal,
+      expiration_date: formData.expiration_date || null,
+      is_liquidation: formData.is_liquidation
     };
 
-    const openAddModal = () => {
-        setEditingProduct(null);
-        setFormData({
-            name: '',
-            category: categories[0],
-            price: '',
-            description: '',
-            image: '',
-            discount_percent: 0,
-            is_daily_deal: false
-        });
-        setShowModal(true);
-    };
+    let error;
 
-    const openEditModal = (product) => {
-        setEditingProduct(product);
-        setFormData({
-            name: product.name,
-            category: product.category,
-            price: product.price,
-            description: product.description || '',
-            image: product.image || '',
-            discount_percent: product.discount_percent || 0,
-            is_daily_deal: product.is_daily_deal || false
-        });
-        setShowModal(true);
-    };
+    if (editingProduct) {
+      const { error: updateError } = await supabase
+        .from('products')
+        .update(productData)
+        .eq('id', editingProduct.id);
+      error = updateError;
+    } else {
+      const { error: insertError } = await supabase
+        .from('products')
+        .insert(productData);
+      error = insertError;
+    }
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setSaving(true);
-        setMessage({ type: '', text: '' });
+    if (error) {
+      setMessage({ type: 'error', text: 'Error: ' + error.message });
+    } else {
+      setMessage({ type: 'success', text: editingProduct ? 'Producto actualizado' : 'Producto agregado' });
+      setShowModal(false);
+      fetchProducts();
+    }
 
-        const productData = {
-            name: formData.name,
-            category: formData.category,
-            price: parseFloat(formData.price),
-            description: formData.description,
-            image: formData.image,
-            discount_percent: parseInt(formData.discount_percent) || 0,
-            is_daily_deal: formData.is_daily_deal
-        };
+    setSaving(false);
+  };
 
-        let error;
+  const handleDelete = async (id) => {
+    if (!confirm('¿Estás seguro de eliminar este producto?')) return;
 
-        if (editingProduct) {
-            const { error: updateError } = await supabase
-                .from('products')
-                .update(productData)
-                .eq('id', editingProduct.id);
-            error = updateError;
-        } else {
-            const { error: insertError } = await supabase
-                .from('products')
-                .insert(productData);
-            error = insertError;
-        }
+    const { error } = await supabase
+      .from('products')
+      .delete()
+      .eq('id', id);
 
-        if (error) {
-            setMessage({ type: 'error', text: 'Error: ' + error.message });
-        } else {
-            setMessage({ type: 'success', text: editingProduct ? 'Producto actualizado' : 'Producto agregado' });
-            setShowModal(false);
-            fetchProducts();
-        }
+    if (error) {
+      setMessage({ type: 'error', text: 'Error al eliminar: ' + error.message });
+    } else {
+      setMessage({ type: 'success', text: 'Producto eliminado' });
+      fetchProducts();
+    }
+  };
 
-        setSaving(false);
-    };
+  return (
+    <div className="inventory-panel">
+      <div className="panel-header">
+        <h2>📦 Gestión de Inventario</h2>
+        <button className="btn-add" onClick={openAddModal}>
+          + Agregar Producto
+        </button>
+      </div>
 
-    const handleDelete = async (id) => {
-        if (!confirm('¿Estás seguro de eliminar este producto?')) return;
+      {message.text && (
+        <div className={`message ${message.type}`}>
+          {message.text}
+        </div>
+      )}
 
-        const { error } = await supabase
-            .from('products')
-            .delete()
-            .eq('id', id);
+      {loading ? (
+        <div className="loading">Cargando productos...</div>
+      ) : (
+        <div className="products-table-wrapper">
+          <table className="products-table">
+            <thead>
+              <tr>
+                <th>Imagen</th>
+                <th>Nombre</th>
+                <th>Categoría</th>
+                <th>Precio</th>
+                <th>Vencimiento</th>
+                <th>Descuento</th>
+                <th>Estado</th>
+                <th>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {products.map(product => {
+                const expirationDate = product.expiration_date ? new Date(product.expiration_date) : null;
+                const today = new Date();
+                const daysUntilExpiry = expirationDate ? Math.ceil((expirationDate - today) / (1000 * 60 * 60 * 24)) : null;
+                const isExpiringSoon = daysUntilExpiry !== null && daysUntilExpiry <= 90 && daysUntilExpiry > 0;
+                const isExpired = daysUntilExpiry !== null && daysUntilExpiry <= 0;
 
-        if (error) {
-            setMessage({ type: 'error', text: 'Error al eliminar: ' + error.message });
-        } else {
-            setMessage({ type: 'success', text: 'Producto eliminado' });
-            fetchProducts();
-        }
-    };
+                return (
+                  <tr key={product.id} className={isExpired ? 'expired-row' : isExpiringSoon ? 'expiring-row' : ''}>
+                    <td>
+                      <img
+                        src={product.image}
+                        alt={product.name}
+                        className="product-thumb"
+                      />
+                    </td>
+                    <td className="product-name">
+                      {product.name}
+                      {isExpiringSoon && <span className="expiring-badge" title={`Vence en ${daysUntilExpiry} días`}>⚠️</span>}
+                      {isExpired && <span className="expired-badge" title="Producto vencido">❌</span>}
+                    </td>
+                    <td>{product.category}</td>
+                    <td className="price">${Number(product.price).toFixed(2)}</td>
+                    <td className="expiration">
+                      {expirationDate ? (
+                        <span className={isExpired ? 'expired' : isExpiringSoon ? 'expiring' : ''}>
+                          {expirationDate.toLocaleDateString('es-EC')}
+                        </span>
+                      ) : '-'}
+                    </td>
+                    <td>
+                      {(() => {
+                        const activeDiscount = getActiveDiscount(product);
+                        if (activeDiscount) {
+                          return (
+                            <span className="discount-tag active-rule" title={`Regla: ${activeDiscount.name}`}>
+                              -{activeDiscount.percent}%
+                            </span>
+                          );
+                        }
+                        return <span className="no-discount">-</span>;
+                      })()}
+                    </td>
+                    <td className="status-cell">
+                      {product.is_liquidation && <span className="liquidation-tag" title="En liquidación">🏷️</span>}
+                    </td>
+                    <td className="actions">
+                      <button
+                        className="btn-edit"
+                        onClick={() => openEditModal(product)}
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        className="btn-delete"
+                        onClick={() => handleDelete(product.id)}
+                      >
+                        🗑️
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-    return (
-        <div className="inventory-panel">
-            <div className="panel-header">
-                <h2>📦 Gestión de Inventario</h2>
-                <button className="btn-add" onClick={openAddModal}>
-                    + Agregar Producto
+      {/* Modal */}
+      {showModal && (
+        <div className="modal-overlay" onClick={() => setShowModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>{editingProduct ? '✏️ Editar Producto' : '➕ Nuevo Producto'}</h3>
+
+            <form onSubmit={handleSubmit}>
+              <div className="form-group">
+                <label>Nombre del Producto</label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  required
+                  placeholder="Ej: Paracetamol 500mg"
+                />
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Categoría</label>
+                  <select
+                    value={formData.category}
+                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                  >
+                    {categories.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label>Precio ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formData.price}
+                    onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                    required
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Descripción</label>
+                <textarea
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Descripción del producto..."
+                  rows={3}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>URL de Imagen</label>
+                <input
+                  type="url"
+                  value={formData.image}
+                  onChange={(e) => setFormData({ ...formData, image: e.target.value })}
+                  placeholder="https://..."
+                />
+                {formData.image && (
+                  <img src={formData.image} alt="Preview" className="image-preview" />
+                )}
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Descuento (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={formData.discount_percent}
+                    onChange={(e) => setFormData({ ...formData, discount_percent: e.target.value })}
+                  />
+                </div>
+
+                <div className="form-group checkbox-group">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={formData.is_daily_deal}
+                      onChange={(e) => setFormData({ ...formData, is_daily_deal: e.target.checked })}
+                    />
+                    🔥 Oferta del Día
+                  </label>
+                </div>
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>Fecha de Vencimiento</label>
+                  <input
+                    type="date"
+                    value={formData.expiration_date}
+                    onChange={(e) => setFormData({ ...formData, expiration_date: e.target.value })}
+                  />
+                </div>
+
+                <div className="form-group checkbox-group">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={formData.is_liquidation}
+                      onChange={(e) => setFormData({ ...formData, is_liquidation: e.target.checked })}
+                    />
+                    🏷️ Liquidación
+                  </label>
+                </div>
+              </div>
+
+              <div className="modal-actions">
+                <button type="button" className="btn-cancel" onClick={() => setShowModal(false)}>
+                  Cancelar
                 </button>
-            </div>
+                <button type="submit" className="btn-save" disabled={saving}>
+                  {saving ? 'Guardando...' : (editingProduct ? 'Actualizar' : 'Crear Producto')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
-            {message.text && (
-                <div className={`message ${message.type}`}>
-                    {message.text}
-                </div>
-            )}
-
-            {loading ? (
-                <div className="loading">Cargando productos...</div>
-            ) : (
-                <div className="products-table-wrapper">
-                    <table className="products-table">
-                        <thead>
-                            <tr>
-                                <th>Imagen</th>
-                                <th>Nombre</th>
-                                <th>Categoría</th>
-                                <th>Precio</th>
-                                <th>Descuento</th>
-                                <th>Oferta</th>
-                                <th>Acciones</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {products.map(product => (
-                                <tr key={product.id}>
-                                    <td>
-                                        <img
-                                            src={product.image}
-                                            alt={product.name}
-                                            className="product-thumb"
-                                        />
-                                    </td>
-                                    <td className="product-name">{product.name}</td>
-                                    <td>{product.category}</td>
-                                    <td className="price">${Number(product.price).toFixed(2)}</td>
-                                    <td>
-                                        {product.discount_percent > 0 && (
-                                            <span className="discount-tag">-{product.discount_percent}%</span>
-                                        )}
-                                    </td>
-                                    <td>
-                                        {product.is_daily_deal && <span className="deal-tag">🔥</span>}
-                                    </td>
-                                    <td className="actions">
-                                        <button
-                                            className="btn-edit"
-                                            onClick={() => openEditModal(product)}
-                                        >
-                                            ✏️
-                                        </button>
-                                        <button
-                                            className="btn-delete"
-                                            onClick={() => handleDelete(product.id)}
-                                        >
-                                            🗑️
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            )}
-
-            {/* Modal */}
-            {showModal && (
-                <div className="modal-overlay" onClick={() => setShowModal(false)}>
-                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-                        <h3>{editingProduct ? '✏️ Editar Producto' : '➕ Nuevo Producto'}</h3>
-
-                        <form onSubmit={handleSubmit}>
-                            <div className="form-group">
-                                <label>Nombre del Producto</label>
-                                <input
-                                    type="text"
-                                    value={formData.name}
-                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                    required
-                                    placeholder="Ej: Paracetamol 500mg"
-                                />
-                            </div>
-
-                            <div className="form-row">
-                                <div className="form-group">
-                                    <label>Categoría</label>
-                                    <select
-                                        value={formData.category}
-                                        onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                                    >
-                                        {categories.map(cat => (
-                                            <option key={cat} value={cat}>{cat}</option>
-                                        ))}
-                                    </select>
-                                </div>
-
-                                <div className="form-group">
-                                    <label>Precio ($)</label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        value={formData.price}
-                                        onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                                        required
-                                        placeholder="0.00"
-                                    />
-                                </div>
-                            </div>
-
-                            <div className="form-group">
-                                <label>Descripción</label>
-                                <textarea
-                                    value={formData.description}
-                                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                                    placeholder="Descripción del producto..."
-                                    rows={3}
-                                />
-                            </div>
-
-                            <div className="form-group">
-                                <label>URL de Imagen</label>
-                                <input
-                                    type="url"
-                                    value={formData.image}
-                                    onChange={(e) => setFormData({ ...formData, image: e.target.value })}
-                                    placeholder="https://..."
-                                />
-                                {formData.image && (
-                                    <img src={formData.image} alt="Preview" className="image-preview" />
-                                )}
-                            </div>
-
-                            <div className="form-row">
-                                <div className="form-group">
-                                    <label>Descuento (%)</label>
-                                    <input
-                                        type="number"
-                                        min="0"
-                                        max="100"
-                                        value={formData.discount_percent}
-                                        onChange={(e) => setFormData({ ...formData, discount_percent: e.target.value })}
-                                    />
-                                </div>
-
-                                <div className="form-group checkbox-group">
-                                    <label>
-                                        <input
-                                            type="checkbox"
-                                            checked={formData.is_daily_deal}
-                                            onChange={(e) => setFormData({ ...formData, is_daily_deal: e.target.checked })}
-                                        />
-                                        🔥 Oferta del Día
-                                    </label>
-                                </div>
-                            </div>
-
-                            <div className="modal-actions">
-                                <button type="button" className="btn-cancel" onClick={() => setShowModal(false)}>
-                                    Cancelar
-                                </button>
-                                <button type="submit" className="btn-save" disabled={saving}>
-                                    {saving ? 'Guardando...' : (editingProduct ? 'Actualizar' : 'Crear Producto')}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            <style>{`
+      <style>{`
         .inventory-panel {
           width: 100%;
         }
@@ -421,8 +498,52 @@ export default function InventoryPanel() {
           font-weight: 700;
         }
 
+        .discount-tag.active-rule {
+          background: linear-gradient(135deg, #fef3c7, #fde68a);
+          color: #b45309;
+          cursor: help;
+        }
+
+        .no-discount {
+          color: #9ca3af;
+        }
+
         .deal-tag {
           font-size: 1.2rem;
+        }
+
+        .liquidation-tag {
+          font-size: 1.2rem;
+          margin-left: 0.25rem;
+        }
+
+        .status-cell {
+          display: flex;
+          gap: 0.25rem;
+        }
+
+        .expiring-badge, .expired-badge {
+          margin-left: 0.5rem;
+        }
+
+        .expiration .expiring {
+          color: #f59e0b;
+          font-weight: 600;
+        }
+
+        .expiration .expired {
+          color: #dc2626;
+          font-weight: 600;
+          text-decoration: line-through;
+        }
+
+        .expiring-row {
+          background: #fef3c7 !important;
+        }
+
+        .expired-row {
+          background: #fee2e2 !important;
+          opacity: 0.7;
         }
 
         .actions {
@@ -606,6 +727,6 @@ export default function InventoryPanel() {
           }
         }
       `}</style>
-        </div>
-    );
+    </div>
+  );
 }

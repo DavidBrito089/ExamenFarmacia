@@ -3,7 +3,76 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 export default function CartDrawer({ isOpen, onClose, cartItems, onRemove, onUpdateQty }) {
   const navigate = useNavigate();
-  const total = cartItems.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+
+  // Calculate price based on promotion type
+  const calculateItemPrice = (item) => {
+    const qty = item.quantity;
+    const price = item.original_price || item.price;
+    const promoType = item.promotion_type || 'percentage';
+    const discountValue = item.discount_percent || 0;
+
+    switch (promoType) {
+      case '2x1':
+        // Pay for half (rounded up)
+        const payFor2x1 = Math.ceil(qty / 2);
+        return {
+          subtotal: payFor2x1 * price,
+          savings: (qty - payFor2x1) * price,
+          label: `🎁 2x1: Pagas ${payFor2x1}, llevas ${qty}`
+        };
+
+      case '3x2':
+        // Pay for 2 out of every 3
+        const sets3x2 = Math.floor(qty / 3);
+        const remainder3x2 = qty % 3;
+        const payFor3x2 = (sets3x2 * 2) + remainder3x2;
+        return {
+          subtotal: payFor3x2 * price,
+          savings: (qty - payFor3x2) * price,
+          label: `🎉 3x2: Pagas ${payFor3x2}, llevas ${qty}`
+        };
+
+      case 'second_unit':
+        // Second unit discount
+        if (qty >= 2) {
+          const fullPriceUnits = Math.ceil(qty / 2);
+          const discountedUnits = Math.floor(qty / 2);
+          const discountedPrice = price * (1 - discountValue / 100);
+          const subtotal = (fullPriceUnits * price) + (discountedUnits * discountedPrice);
+          return {
+            subtotal,
+            savings: (qty * price) - subtotal,
+            label: `✨ 2da unidad: -${discountValue}%`
+          };
+        }
+        return { subtotal: qty * price, savings: 0, label: null };
+
+      case 'fixed_price':
+        return {
+          subtotal: qty * discountValue,
+          savings: qty * (price - discountValue),
+          label: `💰 Precio especial: $${discountValue}`
+        };
+
+      case 'percentage':
+      default:
+        const discountedPrice = price * (1 - discountValue / 100);
+        return {
+          subtotal: qty * discountedPrice,
+          savings: qty * (price - discountedPrice),
+          label: discountValue > 0 ? `🏷️ -${discountValue}%` : null
+        };
+    }
+  };
+
+  // Calculate totals
+  const cartCalculations = cartItems.map(item => ({
+    ...item,
+    ...calculateItemPrice(item)
+  }));
+
+  const subtotal = cartCalculations.reduce((acc, item) => acc + item.subtotal, 0);
+  const totalSavings = cartCalculations.reduce((acc, item) => acc + item.savings, 0);
 
   const handleCheckout = () => {
     onClose();
@@ -46,14 +115,15 @@ export default function CartDrawer({ isOpen, onClose, cartItems, onRemove, onUpd
                   </div>
                 ) : (
                   <div className="cart-items-list">
-                    {cartItems.map(item => (
+                    {cartCalculations.map(item => (
                       <div key={item.id} className="cart-item-premium">
                         <div className="item-img-premium">
                           <img src={item.image} alt={item.name} />
                         </div>
                         <div className="item-info-premium">
                           <h4>{item.name}</h4>
-                          <span className="unit-price">${item.price.toFixed(2)} c/u</span>
+                          <span className="unit-price">${(item.original_price || item.price).toFixed(2)} c/u</span>
+                          {item.label && <span className="promo-label">{item.label}</span>}
                           <div className="item-controls-premium">
                             <div className="qty-pill">
                               <button onClick={() => onUpdateQty(item.id, -1)}>-</button>
@@ -64,7 +134,10 @@ export default function CartDrawer({ isOpen, onClose, cartItems, onRemove, onUpd
                           </div>
                         </div>
                         <div className="item-subtotal-premium">
-                          ${(item.price * item.quantity).toFixed(2)}
+                          ${item.subtotal.toFixed(2)}
+                          {item.savings > 0 && (
+                            <span className="item-savings">Ahorras ${item.savings.toFixed(2)}</span>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -75,13 +148,15 @@ export default function CartDrawer({ isOpen, onClose, cartItems, onRemove, onUpd
               {cartItems.length > 0 && (
                 <div className="cart-footer-premium">
                   <div className="summary-card-inner">
-                    <div className="summary-row">
-                      <span>Subtotal estimado</span>
-                      <span>${total.toFixed(2)}</span>
-                    </div>
+                    {totalSavings > 0 && (
+                      <div className="summary-row savings">
+                        <span>🎉 Tu ahorro total</span>
+                        <span className="savings-amount">-${totalSavings.toFixed(2)}</span>
+                      </div>
+                    )}
                     <div className="summary-row total">
                       <span>Total de tu orden</span>
-                      <span className="amount">${total.toFixed(2)}</span>
+                      <span className="amount">${subtotal.toFixed(2)}</span>
                     </div>
                   </div>
                   <button className="btn btn-primary btn-block" onClick={handleCheckout}>
@@ -161,7 +236,44 @@ export default function CartDrawer({ isOpen, onClose, cartItems, onRemove, onUpd
         .qty-pill span { min-width: 20px; text-align: center; font-weight: 700; }
         .remove-link { background: none; border: none; color: #f43f5e; font-size: 0.8rem; text-decoration: underline; cursor: pointer; }
 
-        .item-subtotal-premium { font-weight: 800; color: var(--primary-dark); font-family: 'Outfit', sans-serif; font-size: 1.1rem; }
+        .item-subtotal-premium { 
+          font-weight: 800; 
+          color: var(--primary-dark); 
+          font-family: 'Outfit', sans-serif; 
+          font-size: 1.1rem; 
+          text-align: right;
+        }
+
+        .promo-label {
+          display: inline-block;
+          background: linear-gradient(135deg, #7c3aed, #a855f7);
+          color: white;
+          padding: 3px 8px;
+          border-radius: 6px;
+          font-size: 0.75rem;
+          font-weight: 700;
+          margin-bottom: 0.5rem;
+        }
+
+        .item-savings {
+          display: block;
+          font-size: 0.75rem;
+          color: #10b981;
+          font-weight: 600;
+          margin-top: 0.25rem;
+        }
+
+        .summary-row.savings {
+          background: #ecfdf5;
+          padding: 0.75rem;
+          border-radius: 8px;
+          margin-bottom: 0.75rem;
+        }
+
+        .savings-amount {
+          color: #10b981;
+          font-weight: 700;
+        }
 
         .cart-footer-premium { padding: 2rem; background: #f8fafc; }
         .summary-card-inner { margin-bottom: 1.5rem; }

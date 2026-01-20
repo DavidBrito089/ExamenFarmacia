@@ -3,7 +3,7 @@ import Hero from '../components/Hero';
 import ProductCard from '../components/ProductCard';
 import ProductModal from '../components/ProductModal';
 
-export default function Home({ products, allProducts, loading, addToCart, selectedCategory, onClearCategory }) {
+export default function Home({ products, allProducts, liquidationProducts = [], loading, addToCart, selectedCategory, onClearCategory }) {
   const [selectedProduct, setSelectedProduct] = useState(null);
 
   const categories = [...new Set(products.map(p => p.category))];
@@ -50,6 +50,7 @@ export default function Home({ products, allProducts, loading, addToCart, select
       <Hero onAddToCart={addToCart} />
 
       <main className="container main-catalog" id="products">
+
         {selectedCategory && (
           <div className="filter-status-premium glass">
             <span>Explorando la categoría: <strong className="gradient-text">{selectedCategory}</strong></span>
@@ -166,6 +167,37 @@ export default function Home({ products, allProducts, loading, addToCart, select
         .no-results-icon { font-size: 4rem; margin-bottom: 1.5rem; }
         .no-results-premium h3 { font-size: 1.75rem; margin-bottom: 1rem; color: var(--primary-dark); }
         .no-results-premium p { color: var(--text-light); margin-bottom: 2rem; }
+
+        .liquidation-section {
+          margin-bottom: 5rem;
+          background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+          padding: 2rem;
+          border-radius: 20px;
+        }
+
+        .liquidation-header {
+          flex-wrap: wrap;
+        }
+
+        .liquidation-title {
+          color: #dc2626 !important;
+        }
+
+        .liquidation-badge {
+          background: #dc2626;
+          color: white;
+          padding: 0.5rem 1rem;
+          border-radius: 20px;
+          font-size: 0.85rem;
+          font-weight: 700;
+          animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.7; }
+        }
+
 
   @media (max-width: 768px) {
           .section-header { gap: 1rem; margin-bottom: 1.5rem; }

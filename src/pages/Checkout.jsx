@@ -2,17 +2,22 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../supabaseClient';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import QRPaymentModal from '../components/QRPaymentModal';
+import LocationPicker from '../components/LocationPicker';
 
 export default function Checkout({ cartItems, onClearCart }) {
   const { user } = useAuth();
   const navigate = useNavigate();
 
+  const [deliveryMethod, setDeliveryMethod] = useState('delivery'); // 'delivery' or 'pickup'
+  const [coordinates, setCoordinates] = useState(null); // { lat, lng }
+  const [showMap, setShowMap] = useState(false);
+
   const [shippingInfo, setShippingInfo] = useState({
     fullName: '',
     address: '',
-    city: '',
+    city: 'Quito', // Default to Quito
     phone: ''
   });
   const [loading, setLoading] = useState(false);
@@ -20,7 +25,124 @@ export default function Checkout({ cartItems, onClearCart }) {
   const [showQRModal, setShowQRModal] = useState(false);
   const [pendingOrderId, setPendingOrderId] = useState(null);
 
-  const total = cartItems.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+  const [shippingCost, setShippingCost] = useState(0);
+
+  // Store Location: Jardín del Valle (Abelardo Flores E20-70)
+  const STORE_LOCATION = { lat: -0.2246, lng: -78.4975 };
+
+  // Calculate distance using Haversine formula
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = deg2rad(lat2 - lat1);
+    const dLon = deg2rad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const d = R * c; // Distance in km
+    return d;
+  };
+
+  const deg2rad = (deg) => {
+    return deg * (Math.PI / 180);
+  };
+
+  // Update shipping cost when coordinates change
+  useEffect(() => {
+    if (deliveryMethod === 'pickup') {
+      setShippingCost(0);
+      return;
+    }
+
+    // Free shipping for orders over $50
+    const subtotal = cartItems.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+    // Note: We use calculated subtotal below, but for free shipping check we use raw or calculated?
+    // Let's use calculated Total. We'll check this inside the main component flow or pass it.
+    // For now, let's use a simpler check or wait for 'total' variable which is dependent on cartCalculations.
+    // Actually, 'total' is derived below. Let's move this effect or use cartCalculations dependency.
+  }, [deliveryMethod, coordinates]);
+
+  // Estimated time calculation
+  const getEstimatedTime = () => {
+    if (deliveryMethod === 'pickup') return '15-20 minutos (Listo para retirar)';
+    return '30-45 minutos';
+  };
+
+  // Calculate price based on promotion type
+  const calculateItemPrice = (item) => {
+    const qty = item.quantity;
+    const price = item.original_price || item.price;
+    const promoType = item.promotion_type || 'percentage';
+    const discountValue = item.discount_percent || 0;
+
+    switch (promoType) {
+      case '2x1':
+        const payFor2x1 = Math.ceil(qty / 2);
+        return { subtotal: payFor2x1 * price, savings: (qty - payFor2x1) * price };
+
+      case '3x2':
+        const sets3x2 = Math.floor(qty / 3);
+        const remainder3x2 = qty % 3;
+        const payFor3x2 = (sets3x2 * 2) + remainder3x2;
+        return { subtotal: payFor3x2 * price, savings: (qty - payFor3x2) * price };
+
+      case 'second_unit':
+        if (qty >= 2) {
+          const fullPriceUnits = Math.ceil(qty / 2);
+          const discountedUnits = Math.floor(qty / 2);
+          const discountedPrice = price * (1 - discountValue / 100);
+          const subtotal = (fullPriceUnits * price) + (discountedUnits * discountedPrice);
+          return { subtotal, savings: (qty * price) - subtotal };
+        }
+        return { subtotal: qty * price, savings: 0 };
+
+      case 'fixed_price':
+        return { subtotal: qty * discountValue, savings: qty * (price - discountValue) };
+
+      case 'percentage':
+      default:
+        const discountedPrice = price * (1 - discountValue / 100);
+        return { subtotal: qty * discountedPrice, savings: qty * (price - discountedPrice) };
+    }
+  };
+
+  const cartCalculations = cartItems.map(item => ({
+    ...item,
+    ...calculateItemPrice(item)
+  }));
+
+  const subtotalBeforeShipping = cartCalculations.reduce((acc, item) => acc + item.subtotal, 0);
+  const totalSavings = cartCalculations.reduce((acc, item) => acc + item.savings, 0);
+
+  // Calculate final total including shipping
+  const total = subtotalBeforeShipping + shippingCost;
+
+  // Recalculate shipping cost when dependencies change
+  useEffect(() => {
+    if (deliveryMethod === 'pickup') {
+      setShippingCost(0);
+      return;
+    }
+
+    if (subtotalBeforeShipping >= 50) {
+      setShippingCost(0);
+      return;
+    }
+
+    if (!coordinates) {
+      setShippingCost(2.50); // Default base cost if no location selected yet
+      return;
+    }
+
+    const dist = calculateDistance(STORE_LOCATION.lat, STORE_LOCATION.lng, coordinates.lat, coordinates.lng);
+    // Base $1.50 + $0.50 per km
+    let cost = 1.50 + (dist * 0.50);
+    // Max cap $10.00
+    if (cost > 10) cost = 10;
+
+    setShippingCost(parseFloat(cost.toFixed(2)));
+  }, [deliveryMethod, coordinates, subtotalBeforeShipping]);
 
   useEffect(() => {
     if (user) {
@@ -56,9 +178,23 @@ export default function Checkout({ cartItems, onClearCart }) {
       return;
     }
 
-    // Validate form
-    if (!shippingInfo.fullName || !shippingInfo.address || !shippingInfo.city || !shippingInfo.phone) {
-      setError('Por favor completa todos los campos de envío.');
+    if (deliveryMethod === 'delivery') {
+      if (shippingInfo.city.trim().toLowerCase() !== 'quito') {
+        setError('Lo sentimos, los envíos a domicilio solo están disponibles en Quito.');
+        return;
+      }
+      if (!shippingInfo.address) {
+        setError('Por favor ingresa tu dirección de envío.');
+        return;
+      }
+      if (!coordinates) {
+        setError('Por favor utiliza el mapa para confirmar tu ubicación exacta y calcular el envío.');
+        return;
+      }
+    }
+
+    if (!shippingInfo.fullName || !shippingInfo.phone) {
+      setError('Por favor completa tu nombre y teléfono.');
       return;
     }
 
@@ -72,6 +208,14 @@ export default function Checkout({ cartItems, onClearCart }) {
     setLoading(true);
     setShowQRModal(false);
 
+    let finalAddress = '';
+    if (deliveryMethod === 'pickup') {
+      finalAddress = `RETIRO EN TIENDA - Cliente: ${shippingInfo.fullName}, Tel: ${shippingInfo.phone}`;
+    } else {
+      const coordString = coordinates ? `(Lat: ${coordinates.lat.toFixed(5)}, Lng: ${coordinates.lng.toFixed(5)})` : '';
+      finalAddress = `ENVÍO ($${shippingInfo.address}) - ${shippingInfo.address} ${coordString}, ${shippingInfo.city}. Tel: ${shippingInfo.phone}`;
+    }
+
     const { error: insertError } = await supabase
       .from('orders')
       .insert({
@@ -83,7 +227,7 @@ export default function Checkout({ cartItems, onClearCart }) {
           price: item.price,
           quantity: item.quantity
         })),
-        shipping_address: `${shippingInfo.fullName}, ${shippingInfo.address}, ${shippingInfo.city}. Tel: ${shippingInfo.phone}`,
+        shipping_address: finalAddress,
         status: 'paid'
       });
 
@@ -121,6 +265,41 @@ export default function Checkout({ cartItems, onClearCart }) {
             {error && <div className="error-box-premium">{error}</div>}
 
             <form onSubmit={handleSubmit} className="premium-form">
+              {/* Delivery Method Toggle */}
+              <div className="delivery-method-toggle">
+                <button
+                  type="button"
+                  className={`method-btn ${deliveryMethod === 'delivery' ? 'active' : ''}`}
+                  onClick={() => setDeliveryMethod('delivery')}
+                >
+                  <span className="icon">🛵</span>
+                  <div className="text">
+                    <span className="label">Envío a Domicilio</span>
+                    <span className="sub">Recibe en tu puerta</span>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  className={`method-btn ${deliveryMethod === 'pickup' ? 'active' : ''}`}
+                  onClick={() => setDeliveryMethod('pickup')}
+                >
+                  <span className="icon">🏪</span>
+                  <div className="text">
+                    <span className="label">Retiro en Tienda</span>
+                    <span className="sub">Pasa a recoger</span>
+                  </div>
+                </button>
+              </div>
+
+              {/* Estimated Time Box */}
+              <div className="estimated-time-box">
+                <span className="icon">⏱️</span>
+                <div className="time-info">
+                  <span className="label">Tiempo Estimado</span>
+                  <span className="value">{getEstimatedTime()}</span>
+                </div>
+              </div>
+
               <div className="form-group-premium">
                 <label>Nombre Completo</label>
                 <input
@@ -132,27 +311,73 @@ export default function Checkout({ cartItems, onClearCart }) {
                 />
               </div>
 
-              <div className="form-group-premium">
-                <label>Dirección de Envío</label>
-                <input
-                  name="address"
-                  required
-                  value={shippingInfo.address}
-                  onChange={handleChange}
-                  placeholder="Calle, Edificio, Apto..."
-                />
-              </div>
+              {deliveryMethod === 'delivery' ? (
+                <>
+                  <div className="form-group-premium">
+                    <label>Dirección de Envío</label>
+                    <div className="address-input-wrapper">
+                      <input
+                        name="address"
+                        required
+                        value={shippingInfo.address}
+                        onChange={handleChange}
+                        placeholder="Calle, Edificio, Apto..."
+                      />
+                      <button
+                        type="button"
+                        className="btn-map-toggle"
+                        onClick={() => setShowMap(!showMap)}
+                      >
+                        {showMap ? 'Ocultar Mapa' : '📍 Ubicar en Mapa'}
+                      </button>
+                    </div>
+                  </div>
 
-              <div className="form-row-premium">
-                <div className="form-group-premium">
-                  <label>Ciudad</label>
-                  <input name="city" required value={shippingInfo.city} onChange={handleChange} placeholder="Ciudad" />
+                  <AnimatePresence>
+                    {showMap && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="map-wrapper"
+                      >
+                        <LocationPicker position={coordinates} setPosition={setCoordinates} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  <div className="form-row-premium">
+                    <div className="form-group-premium">
+                      <label>Ciudad</label>
+                      <input
+                        name="city"
+                        required
+                        value={shippingInfo.city}
+                        onChange={handleChange}
+                        placeholder="Solo disponible en Quito"
+                        readOnly={true} // Enforce Quito visually as well? Or allow typing but validate? Plan said enforce validation. Let's make it readOnly for better UX if strictly Quito.
+                        style={{ backgroundColor: '#f1f5f9', cursor: 'not-allowed' }}
+                      />
+                      <small style={{ color: '#64748b', fontSize: '0.8rem' }}>* Solo disponible en Quito</small>
+                    </div>
+                    <div className="form-group-premium">
+                      <label>Teléfono</label>
+                      <input name="phone" required value={shippingInfo.phone} onChange={handleChange} placeholder="+593 ..." />
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="pickup-info-box">
+                  <h4>📍 Dirección de la Farmacia</h4>
+                  <p>Jardín del Valle, en la calle Abelardo Flores E20-70 y Cristóbal Troya.</p>
+                  <p className="hours">Horario: 8:00 AM - 9:00 PM</p>
+
+                  <div className="form-group-premium" style={{ marginTop: '1rem' }}>
+                    <label>Teléfono de Contacto</label>
+                    <input name="phone" required value={shippingInfo.phone} onChange={handleChange} placeholder="+593 ..." />
+                  </div>
                 </div>
-                <div className="form-group-premium">
-                  <label>Teléfono</label>
-                  <input name="phone" required value={shippingInfo.phone} onChange={handleChange} placeholder="+593 ..." />
-                </div>
-              </div>
+              )}
 
               <div className="payment-method-box">
                 <div className="payment-method-header">
@@ -179,7 +404,7 @@ export default function Checkout({ cartItems, onClearCart }) {
           >
             <h3>Resumen del Pedido</h3>
             <div className="summary-list-premium">
-              {cartItems.map(item => (
+              {cartCalculations.map(item => (
                 <div key={item.id} className="summary-item-premium">
                   <div className="summary-item-img">
                     <img src={item.image} alt={item.name} />
@@ -187,20 +412,42 @@ export default function Checkout({ cartItems, onClearCart }) {
                   <div className="summary-item-text">
                     <p className="name">{item.name}</p>
                     <p className="qty">Cant: {item.quantity}</p>
+                    {item.savings > 0 && (
+                      <p className="promo-tag">{item.promotion_type === '2x1' ? '🎁 2x1' : item.promotion_type === '3x2' ? '🎉 3x2' : '🏷️ Promo'}</p>
+                    )}
                   </div>
-                  <span className="subtotal">${(item.price * item.quantity).toFixed(2)}</span>
+                  <div className="subtotal-col">
+                    <span className="subtotal">${item.subtotal.toFixed(2)}</span>
+                    {item.savings > 0 && <span className="item-save">-${item.savings.toFixed(2)}</span>}
+                  </div>
                 </div>
               ))}
             </div>
 
             <div className="grand-total-box">
+              {totalSavings > 0 && (
+                <div className="total-line savings-line">
+                  <span>🎉 Tu ahorro</span>
+                  <span className="savings-val">-${totalSavings.toFixed(2)}</span>
+                </div>
+              )}
               <div className="total-line">
-                <span>Subtotal</span>
-                <span>${total.toFixed(2)}</span>
+                <span>Método de Entrega</span>
+                <span className="method-val">{deliveryMethod === 'delivery' ? '🛵 Domicilio' : '🏪 Retiro'}</span>
               </div>
               <div className="total-line">
-                <span>Envío Premium</span>
-                <span className="free">Gratis</span>
+                <span>Costo de Envío</span>
+                {deliveryMethod === 'delivery' ? (
+                  subtotalBeforeShipping >= 50 ? (
+                    <span className="free">Gratis (Orden &gt; $50)</span>
+                  ) : shippingCost > 0 ? (
+                    <span className="shipping-cost">${shippingCost.toFixed(2)}</span>
+                  ) : (
+                    <span className="calculating">...</span>
+                  )
+                ) : (
+                  <span className="free">Gratis</span>
+                )}
               </div>
               <div className="total-line final">
                 <span>Total Final</span>
@@ -243,11 +490,77 @@ export default function Checkout({ cartItems, onClearCart }) {
           margin-bottom: 1.5rem;
         }
 
+        .delivery-method-toggle {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 1rem;
+          margin-bottom: 2rem;
+        }
+
+        .method-btn {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          padding: 1rem;
+          border: 2px solid #e2e8f0;
+          background: white;
+          border-radius: 12px;
+          cursor: pointer;
+          transition: all 0.3s;
+          text-align: left;
+        }
+
+        .method-btn:hover { border-color: #cbd5e1; }
+        .method-btn.active { border-color: var(--primary-color); background: #f0f9ff; }
+        .method-btn .icon { font-size: 1.5rem; }
+        
+        .method-btn .text { display: flex; flex-direction: column; }
+        .method-btn .label { font-weight: 700; color: var(--text-color); }
+        .method-btn .sub { font-size: 0.8rem; color: #64748b; }
+
+        .estimated-time-box {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          background: #f8fafc;
+          padding: 1rem;
+          border-radius: 12px;
+          margin-bottom: 2rem;
+          border-left: 4px solid var(--primary-color);
+        }
+        .estimated-time-box .icon { font-size: 1.5rem; }
+        .time-info { display: flex; flex-direction: column; }
+        .time-info .label { font-size: 0.8rem; color: #64748b; font-weight: 600; }
+        .time-info .value { font-weight: 700; color: var(--text-color); }
+
         .form-group-premium { margin-bottom: 1.5rem; }
         .form-group-premium label { display: block; font-weight: 700; font-size: 0.9rem; margin-bottom: 0.6rem; color: var(--text-color); }
         .form-group-premium input { width: 100%; padding: 1rem; border: 1px solid #e2e8f0; border-radius: 12px; background: #f8fafc; transition: 0.3s; }
         .form-group-premium input:focus { outline: none; border-color: var(--primary-color); box-shadow: 0 0 0 4px rgba(0, 180, 216, 0.1); background: white; }
         
+        .address-input-wrapper { display: flex; gap: 0.5rem; }
+        .btn-map-toggle {
+          white-space: nowrap;
+          padding: 0 1rem;
+          background: white;
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          cursor: pointer;
+          font-weight: 600;
+          color: var(--primary-color);
+        }
+        .btn-map-toggle:hover { background: #f0f9ff; border-color: var(--primary-color); }
+
+        .pickup-info-box {
+          background: #f8fafc;
+          padding: 1.5rem;
+          border-radius: 12px;
+          border: 1px dashed #cbd5e1;
+        }
+        .pickup-info-box h4 { margin: 0 0 0.5rem 0; font-size: 1.1rem; color: var(--primary-dark); }
+        .pickup-info-box p { margin: 0; color: #64748b; font-size: 0.95rem; line-height: 1.5; }
+        .pickup-info-box .hours { margin-top: 0.5rem; font-weight: 600; color: var(--primary-color); }
+
         .form-row-premium { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
 
         .payment-method-box {
@@ -266,9 +579,7 @@ export default function Checkout({ cartItems, onClearCart }) {
           gap: 1rem;
         }
 
-        .payment-icon {
-          font-size: 2rem;
-        }
+        .payment-icon { font-size: 2rem; }
 
         .payment-method-header h4 {
           color: white;
@@ -318,6 +629,36 @@ export default function Checkout({ cartItems, onClearCart }) {
         .total-line.final { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #f1f5f9; font-weight: 800; font-size: 1.5rem; color: var(--text-color); }
         .total-line .amount { color: var(--primary-color); }
         .free { color: #10b981; font-weight: 700; }
+
+        .promo-tag {
+          display: inline-block;
+          background: linear-gradient(135deg, #7c3aed, #a855f7);
+          color: white;
+          padding: 2px 6px;
+          border-radius: 4px;
+          font-size: 0.7rem;
+          font-weight: 700;
+          margin-top: 0.25rem;
+        }
+
+        .subtotal-col { text-align: right; }
+
+        .item-save {
+          display: block;
+          font-size: 0.75rem;
+          color: #10b981;
+          font-weight: 600;
+        }
+
+        .savings-line {
+          background: #ecfdf5;
+          padding: 0.75rem;
+          border-radius: 8px;
+          margin-bottom: 0.75rem;
+        }
+
+        .savings-val { color: #10b981; font-weight: 700; }
+        .method-val { font-weight: 600; color: var(--primary-dark); }
 
         @media (max-width: 968px) { .checkout-grid-premium { grid-template-columns: 1fr; } .checkout-header-premium h1 { font-size: 2rem; } }
       `}</style>
